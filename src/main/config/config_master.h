@@ -146,6 +146,7 @@ typedef struct master_s {
 
     uint8_t debug_mode;                     // Processing denominator for PID controller vs gyro sampling rate
     uint8_t task_statistics;
+    uint8_t cpu_overclock;
 
     gyroConfig_t gyroConfig;
     compassConfig_t compassConfig;

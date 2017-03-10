@@ -804,6 +804,7 @@ void createDefaultConfig(master_t *config)
 
     config->debug_mode = DEBUG_MODE;
     config->task_statistics = true;
+    config->cpu_overclock = false;
 
     resetAccelerometerTrims(&config->accelerometerConfig.accZero);
 

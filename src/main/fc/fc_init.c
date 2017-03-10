@@ -164,6 +164,14 @@ void init(void)
 
     printfSupportInit();
 
+    initEEPROM();
+
+    ensureEEPROMContainsValidData();
+    readEEPROM();
+    
+#if defined(STM32F4)
+    initOcSettings(masterConfig.cpu_overclock);
+#endif
     systemInit();
 
     // initialize IO (needed for all IO operations)
@@ -176,11 +184,6 @@ void init(void)
 #ifdef BRUSHED_ESC_AUTODETECT
     detectBrushedESC();
 #endif
-
-    initEEPROM();
-
-    ensureEEPROMContainsValidData();
-    readEEPROM();
 
     systemState |= SYSTEM_STATE_CONFIG_LOADED;
 
