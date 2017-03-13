@@ -415,16 +415,10 @@ void ppmAvoidPWMTimerClash(TIM_TypeDef *pwmTimer, uint8_t pwmProtocol)
         switch (pwmProtocol)
         {
         case PWM_TYPE_ONESHOT125:
-            ppmCountDivisor = ONESHOT125_TIMER_MHZ;
-            break;
         case PWM_TYPE_ONESHOT42:
-            ppmCountDivisor = ONESHOT42_TIMER_MHZ;
-            break;
         case PWM_TYPE_MULTISHOT:
-            ppmCountDivisor = MULTISHOT_TIMER_MHZ;
-            break;
         case PWM_TYPE_BRUSHED:
-            ppmCountDivisor = PWM_BRUSHED_TIMER_MHZ;
+            ppmCountDivisor = motorTimerDivisor;
             break;
         }
         return;

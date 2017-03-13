@@ -22,16 +22,18 @@
 
 #include "platform.h"
 
+#include "common/maths.h"
+
 #include "io.h"
 #include "timer.h"
 #include "pwm_output.h"
 
-#define MULTISHOT_5US_PW    (MULTISHOT_TIMER_MHZ * 5)
-#define MULTISHOT_20US_MULT (MULTISHOT_TIMER_MHZ * 20 / 1000.0f)
-
 static pwmWriteFuncPtr pwmWritePtr;
 static pwmOutputPort_t motors[MAX_SUPPORTED_MOTORS];
 static pwmCompleteWriteFuncPtr pwmCompleteWritePtr = NULL;
+
+static uint32_t motorTickOffset;
+static uint32_t motorTickRange;
 
 #ifdef USE_SERVOS
 static pwmOutputPort_t servos[MAX_SUPPORTED_SERVOS];
@@ -39,7 +41,7 @@ static pwmOutputPort_t servos[MAX_SUPPORTED_SERVOS];
 
 bool pwmMotorsEnabled = false;
 
-static void pwmOCConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t value, uint8_t output)
+static void pwmOCConfig(TIM_TypeDef *tim, uint8_t channel, uint32_t value, uint8_t output)
 {
 #if defined(USE_HAL_DRIVER)
     TIM_HandleTypeDef* Handle = timerFindTimerHandle(tim);
@@ -83,14 +85,14 @@ static void pwmOCConfig(TIM_TypeDef *tim, uint8_t channel, uint16_t value, uint8
 #endif
 }
 
-static void pwmOutConfig(pwmOutputPort_t *port, const timerHardware_t *timerHardware, uint8_t mhz, uint16_t period, uint16_t value)
+static void pwmOutConfig(pwmOutputPort_t *port, const timerHardware_t *timerHardware, uint32_t hz, uint16_t period, uint32_t value)
 {
 #if defined(USE_HAL_DRIVER)
     TIM_HandleTypeDef* Handle = timerFindTimerHandle(timerHardware->tim);
     if(Handle == NULL) return;
 #endif
 
-    configTimeBase(timerHardware->tim, period, mhz);
+    configTimeBaseHz(timerHardware->tim, period, hz);
     pwmOCConfig(timerHardware->tim, timerHardware->channel, value, timerHardware->output);
 
 #if defined(USE_HAL_DRIVER)
@@ -108,38 +110,32 @@ static void pwmOutConfig(pwmOutputPort_t *port, const timerHardware_t *timerHard
     *port->ccr = 0;
 }
 
-static void pwmWriteUnused(uint8_t index, uint16_t value)
+static void pwmWriteUnused(uint8_t index, float value)
 {
     UNUSED(index);
     UNUSED(value);
 }
 
-static void pwmWriteBrushed(uint8_t index, uint16_t value)
-{
-    *motors[index].ccr = (value - 1000) * motors[index].period / 1000;
+uint32_t calculateMotorTick(float value) {
+    return lrintf(((value - PWM_RANGE_US) / PWM_RANGE_US) * motorTickRange) + motorTickOffset;
 }
 
-static void pwmWriteStandard(uint8_t index, uint16_t value)
+static void pwmWriteStandard(uint8_t index, float value)
 {
-    *motors[index].ccr = value;
+    *motors[index].ccr = lrintf(value);
 }
 
-static void pwmWriteOneShot125(uint8_t index, uint16_t value)
+static void pwmWriteBrushed(uint8_t index, float value)
 {
-    *motors[index].ccr = lrintf((float)(value * ONESHOT125_TIMER_MHZ/8.0f));
+    *motors[index].ccr = lrintf((value - PWM_RANGE_US) * motors[index].period / PWM_RANGE_US);
 }
 
-static void pwmWriteOneShot42(uint8_t index, uint16_t value)
+static void pwmWriteFastPwm(uint8_t index, float value)
 {
-    *motors[index].ccr = lrintf((float)(value * ONESHOT42_TIMER_MHZ/24.0f));
+    *motors[index].ccr = calculateMotorTick(value);
 }
 
-static void pwmWriteMultiShot(uint8_t index, uint16_t value)
-{
-    *motors[index].ccr = lrintf(((float)(value-1000) * MULTISHOT_20US_MULT) + MULTISHOT_5US_PW);
-}
-
-void pwmWriteMotor(uint8_t index, uint16_t value)
+void pwmWriteMotor(uint8_t index, float value)
 {
     pwmWritePtr(index, value);
 }
@@ -173,7 +169,7 @@ bool pwmAreMotorsEnabled(void)
 
 static void pwmCompleteWriteUnused(uint8_t motorCount)
 {
-    UNUSED(motorCount);    
+    UNUSED(motorCount);
 }
 
 static void pwmCompleteOneshotMotorUpdate(uint8_t motorCount)
@@ -193,39 +189,58 @@ void pwmCompleteMotorUpdate(uint8_t motorCount)
     pwmCompleteWritePtr(motorCount);
 }
 
+uint8_t motorTimerDivisor;
+
+uint32_t calculateTimerHz(float maxValue) {
+    motorTimerDivisor = ceil((float)SystemCoreClock / (0xffffffff / maxValue));
+    if (SystemCoreClock > 100000000)                       // Divider of 1 showed issues on higher frequency timers
+        motorTimerDivisor = constrain(motorTimerDivisor, 2, motorTimerDivisor);
+    if ((SystemCoreClock / motorTimerDivisor) == 48000000) // FIXME - 48Mhz seemed problematic somehow, while in theory it should work. Stepping down seems to work
+        motorTimerDivisor += 1;
+    return SystemCoreClock / motorTimerDivisor;
+}
+
 void motorInit(const motorConfig_t *motorConfig, uint16_t idlePulse, uint8_t motorCount)
 {
     memset(motors, 0, sizeof(motors));
     
-    uint32_t timerMhzCounter = 0;
+    uint32_t timerHz = 0;
     bool useUnsyncedPwm = motorConfig->useUnsyncedPwm;
     bool isDigital = false;
+    uint32_t idleValue = 0;
 
     switch (motorConfig->motorPwmProtocol) {
     default:
     case PWM_TYPE_ONESHOT125:
-        timerMhzCounter = ONESHOT125_TIMER_MHZ;
-        pwmWritePtr = pwmWriteOneShot125;
+        timerHz = calculateTimerHz(ONESHOT125_OFFSET_US + ONESHOT125_RANGE_US);
+        pwmWritePtr = pwmWriteFastPwm;
+        motorTickOffset = ONESHOT125_OFFSET_US * timerHz / US_SCALE;
+        motorTickRange = lrintf( ((float)ONESHOT125_RANGE_US / US_SCALE) / (1.0f / timerHz) );
+        idleValue = calculateMotorTick(idlePulse);
         break;
     case PWM_TYPE_ONESHOT42:
-        timerMhzCounter = ONESHOT42_TIMER_MHZ;
-        pwmWritePtr = pwmWriteOneShot42;
+        timerHz = calculateTimerHz(ONESHOT42_OFFSET_US + ONESHOT42_RANGE_US);
+        pwmWritePtr = pwmWriteFastPwm;
+        motorTickOffset = ONESHOT42_OFFSET_US * timerHz / US_SCALE;
+        motorTickRange = lrintf( ((float)ONESHOT42_RANGE_US / US_SCALE) / (1.0f / timerHz) );
+        idleValue = calculateMotorTick(idlePulse);
         break;
     case PWM_TYPE_MULTISHOT:
-        timerMhzCounter = MULTISHOT_TIMER_MHZ;
-        pwmWritePtr = pwmWriteMultiShot;
+        timerHz = calculateTimerHz(MULTISHOT_OFFSET_US + MULTISHOT_RANGE_US);
+        pwmWritePtr = pwmWriteFastPwm;
+        motorTickOffset = MULTISHOT_OFFSET_US * timerHz / US_SCALE;
+        motorTickRange = lrintf( ((float)MULTISHOT_RANGE_US / US_SCALE) / (1.0f / timerHz) );
+        idleValue = calculateMotorTick(idlePulse);
         break;
     case PWM_TYPE_BRUSHED:
-        timerMhzCounter = PWM_BRUSHED_TIMER_MHZ;
+        timerHz = calculateTimerHz(PWM_RANGE_US);
         pwmWritePtr = pwmWriteBrushed;
         useUnsyncedPwm = true;
-        idlePulse = 0;
         break;
     case PWM_TYPE_STANDARD:
-        timerMhzCounter = PWM_TIMER_MHZ;
+        timerHz = PWM_TIMER_MHZ * 1000000;
         pwmWritePtr = pwmWriteStandard;
         useUnsyncedPwm = true;
-        idlePulse = 0;
         break;
 #ifdef USE_DSHOT
     case PWM_TYPE_DSHOT1200:
@@ -273,10 +288,9 @@ void motorInit(const motorConfig_t *motorConfig, uint16_t idlePulse, uint8_t mot
 #endif
 
         if (useUnsyncedPwm) {
-            const uint32_t hz = timerMhzCounter * 1000000;
-            pwmOutConfig(&motors[motorIndex], timerHardware, timerMhzCounter, hz / motorConfig->motorPwmRate, idlePulse);
+            pwmOutConfig(&motors[motorIndex], timerHardware, timerHz, timerHz / motorConfig->motorPwmRate, idleValue);
         } else {
-            pwmOutConfig(&motors[motorIndex], timerHardware, timerMhzCounter, 0xFFFF, 0);
+            pwmOutConfig(&motors[motorIndex], timerHardware, timerHz, 0xFFFF, 0);
         }
 
         bool timerAlreadyUsed = false;
@@ -316,10 +330,10 @@ uint32_t getDshotHz(motorPwmProtocolTypes_e pwmProtocolType)
 #endif
 
 #ifdef USE_SERVOS
-void pwmWriteServo(uint8_t index, uint16_t value)
+void pwmWriteServo(uint8_t index, float value)
 {
     if (index < MAX_SUPPORTED_SERVOS && servos[index].ccr) {
-        *servos[index].ccr = value;
+        *servos[index].ccr = lrintf(value);
     }
 }
 

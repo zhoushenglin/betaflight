@@ -51,22 +51,16 @@ typedef enum {
 #define MOTOR_BITLENGTH       19
 #endif
 
-#if defined(STM32F40_41xxx) // must be multiples of timer clock
-#define ONESHOT125_TIMER_MHZ  12
-#define ONESHOT42_TIMER_MHZ   21
-#define MULTISHOT_TIMER_MHZ   84
-#define PWM_BRUSHED_TIMER_MHZ 21
-#elif defined(STM32F7) // must be multiples of timer clock
-#define ONESHOT125_TIMER_MHZ  9
-#define ONESHOT42_TIMER_MHZ   27
-#define MULTISHOT_TIMER_MHZ   54
-#define PWM_BRUSHED_TIMER_MHZ 27
-#else
-#define ONESHOT125_TIMER_MHZ  8
-#define ONESHOT42_TIMER_MHZ   24
-#define MULTISHOT_TIMER_MHZ   72
-#define PWM_BRUSHED_TIMER_MHZ 24
-#endif
+#define ONESHOT125_OFFSET_US 125
+#define ONESHOT42_OFFSET_US (ONESHOT125_OFFSET_US / 3.0f)
+#define MULTISHOT_OFFSET_US 5
+
+#define ONESHOT125_RANGE_US (ONESHOT125_OFFSET_US)
+#define ONESHOT42_RANGE_US (ONESHOT42_OFFSET_US)
+#define MULTISHOT_RANGE_US 20
+#define PWM_RANGE_US 1000
+
+#define US_SCALE 1000000
 
 #define MOTOR_DMA_BUFFER_SIZE 18 /* resolution + frame reset (2us) */
 
@@ -95,9 +89,10 @@ typedef struct {
 motorDmaOutput_t *getMotorDmaOutput(uint8_t index);
 
 extern bool pwmMotorsEnabled;
+extern uint8_t motorTimerDivisor;
 
 struct timerHardware_s;
-typedef void(*pwmWriteFuncPtr)(uint8_t index, uint16_t value);  // function pointer used to write motors
+typedef void(*pwmWriteFuncPtr)(uint8_t index, float value);  // function pointer used to write motors
 typedef void(*pwmCompleteWriteFuncPtr)(uint8_t motorCount);   // function pointer used after motors are written
 
 typedef struct {
@@ -116,16 +111,16 @@ void pwmServoConfig(const struct timerHardware_s *timerHardware, uint8_t servoIn
 
 #ifdef USE_DSHOT
 uint32_t getDshotHz(motorPwmProtocolTypes_e pwmProtocolType);
-void pwmWriteDigital(uint8_t index, uint16_t value);
+void pwmWriteDigital(uint8_t index, float value);
 void pwmDigitalMotorHardwareConfig(const timerHardware_t *timerHardware, uint8_t motorIndex, motorPwmProtocolTypes_e pwmProtocolType);
 void pwmCompleteDigitalMotorUpdate(uint8_t motorCount);
 #endif
 
-void pwmWriteMotor(uint8_t index, uint16_t value);
+void pwmWriteMotor(uint8_t index, float value);
 void pwmShutdownPulsesForAllMotors(uint8_t motorCount);
 void pwmCompleteMotorUpdate(uint8_t motorCount);
 
-void pwmWriteServo(uint8_t index, uint16_t value);
+void pwmWriteServo(uint8_t index, float value);
 
 pwmOutputPort_t *pwmGetMotors(void);
 bool pwmIsSynced(void);

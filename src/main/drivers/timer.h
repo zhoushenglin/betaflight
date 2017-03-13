@@ -182,6 +182,7 @@ void timerForceOverflow(TIM_TypeDef *tim);
 uint8_t timerClockDivisor(TIM_TypeDef *tim);
 
 void configTimeBase(TIM_TypeDef *tim, uint16_t period, uint8_t mhz);  // TODO - just for migration
+void configTimeBaseHz(TIM_TypeDef *tim, uint16_t period, uint32_t hz);
 
 rccPeriphTag_t timerRCC(TIM_TypeDef *tim);
 uint8_t timerInputIrq(TIM_TypeDef *tim);
