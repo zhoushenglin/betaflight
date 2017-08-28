@@ -92,8 +92,8 @@ typedef struct mspPort_s {
     uint16_t cmdMSP;
     uint8_t cmdFlags;
     mspVersion_e mspVersion;
-    uint8_t offset;
-    uint8_t dataSize;
+    int offset;
+    int dataSize;
     uint8_t checksum1;
     uint8_t checksum2;
 } mspPort_t;
