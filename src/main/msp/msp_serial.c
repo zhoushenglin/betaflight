@@ -272,6 +272,7 @@ static int mspSerialEncode(mspPort_t *msp, mspPacket_t *packet, mspVersion_e msp
     const int dataLen = sbufBytesRemaining(&packet->buf);
     uint8_t hdrBuf[16] = { '$', mspMagic[mspVersion], packet->result == MSP_RESULT_ERROR ? '!' : '>'};
     uint8_t crcBuf[2];
+    uint8_t checksum;
     int hdrLen = 3;
     int crcLen = 0;
 
@@ -294,9 +295,9 @@ static int mspSerialEncode(mspPort_t *msp, mspPacket_t *packet, mspVersion_e msp
         }
 
         // Pre-calculate CRC
-        crcBuf[crcLen] = mspSerialChecksumBuf(0, hdrBuf + V1_CHECKSUM_STARTPOS, hdrLen - V1_CHECKSUM_STARTPOS);
-        crcBuf[crcLen] = mspSerialChecksumBuf(crcBuf[crcLen], sbufPtr(&packet->buf), dataLen);
-        crcLen++;
+        checksum = mspSerialChecksumBuf(0, hdrBuf + V1_CHECKSUM_STARTPOS, hdrLen - V1_CHECKSUM_STARTPOS);
+        checksum = mspSerialChecksumBuf(checksum, sbufPtr(&packet->buf), dataLen);
+        crcBuf[crcLen++] = checksum;
     }
     else if (mspVersion == MSP_V2_OVER_V1) {
         mspHeaderV1_t * hdrV1 = (mspHeaderV1_t *)&hdrBuf[hdrLen];
@@ -327,15 +328,15 @@ static int mspSerialEncode(mspPort_t *msp, mspPacket_t *packet, mspVersion_e msp
         hdrV2->size = dataLen;
 
         // V2 CRC: only V2 header + data payload
-        crcBuf[crcLen] = crc8_dvb_s2_update(0, (uint8_t *)hdrV2, sizeof(mspHeaderV2_t));
-        crcBuf[crcLen] = crc8_dvb_s2_update(crcBuf[crcLen], sbufPtr(&packet->buf), dataLen);
-        crcLen++;
+        checksum = crc8_dvb_s2_update(0, (uint8_t *)hdrV2, sizeof(mspHeaderV2_t));
+        checksum = crc8_dvb_s2_update(checksum, sbufPtr(&packet->buf), dataLen);
+        crcBuf[crcLen++] = checksum;
 
         // V1 CRC: All headers + data payload + V2 CRC byte
-        crcBuf[crcLen] = mspSerialChecksumBuf(0, hdrBuf + V1_CHECKSUM_STARTPOS, hdrLen - V1_CHECKSUM_STARTPOS);
-        crcBuf[crcLen] = mspSerialChecksumBuf(crcBuf[crcLen], sbufPtr(&packet->buf), dataLen);
-        crcBuf[crcLen] = mspSerialChecksumBuf(crcBuf[crcLen], crcBuf, crcLen);
-        crcLen++;
+        checksum = mspSerialChecksumBuf(0, hdrBuf + V1_CHECKSUM_STARTPOS, hdrLen - V1_CHECKSUM_STARTPOS);
+        checksum = mspSerialChecksumBuf(checksum, sbufPtr(&packet->buf), dataLen);
+        checksum = mspSerialChecksumBuf(checksum, crcBuf, crcLen);
+        crcBuf[crcLen++] = checksum;
     }
     else if (mspVersion == MSP_V2_NATIVE) {
         mspHeaderV2_t * hdrV2 = (mspHeaderV2_t *)&hdrBuf[hdrLen];
@@ -345,9 +346,9 @@ static int mspSerialEncode(mspPort_t *msp, mspPacket_t *packet, mspVersion_e msp
         hdrV2->cmd = packet->cmd;
         hdrV2->size = dataLen;
 
-        crcBuf[crcLen] = crc8_dvb_s2_update(0, (uint8_t *)hdrV2, sizeof(mspHeaderV2_t));
-        crcBuf[crcLen] = crc8_dvb_s2_update(crcBuf[crcLen], sbufPtr(&packet->buf), dataLen);
-        crcLen++;
+        checksum = crc8_dvb_s2_update(0, (uint8_t *)hdrV2, sizeof(mspHeaderV2_t));
+        checksum = crc8_dvb_s2_update(checksum, sbufPtr(&packet->buf), dataLen);
+        crcBuf[crcLen++] = checksum;
     }
     else {
         // Shouldn't get here
